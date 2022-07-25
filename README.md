@@ -51,7 +51,7 @@ If message 'command not found' is shown when you enter `wget ...` command, you p
 ```
 cd /tmp
 
-wget https://raw.githubusercontent.com/rozvara/EduRouter/main/install.sh
+wget https://github.com/rozvara/EduRouter/raw/main/install.sh
 
 bash install.sh
 ```
