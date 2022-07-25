@@ -1,0 +1,39 @@
+# This file is part of `EduRouter tools'
+
+# DNS spoofing/redirect presented here is only for educational purposes
+
+# Configure this together with 'redirect.py'
+
+
+# "DNS spoofing" demo
+# 172.16.0.0/12 (172.16.0.0–172.31.255.255) is for private use,
+# thus not used in internet and safe to wait for them in mitmproxy
+
+172.18.27.36  example.org
+172.18.27.36  www.example.org
+172.18.27.36  example.com
+172.18.27.36  www.example.com
+
+
+
+# "DNS spoofing" demo #2 - modify 'redirect.py' accordingly
+172.27.36.45  www.some-domain-to-demonstrate.com
+
+
+# for fake faccb**k.com (see redirect.py)
+# we need to block safebrowsing as our fake phishing page is on the list
+
+0.0.0.0 safebrowsing.google.com
+0.0.0.0 safebrowsing.googleapis.com
+0.0.0.0 proxy-safebrowsing.googleapis.com
+
+0.0.0.0 accounts.firefox.com
+0.0.0.0 content-signature-2.cdn.mozilla.net
+0.0.0.0 contile.services.mozilla.com
+0.0.0.0 detectportal.firefox.com
+0.0.0.0 detectportal.services.mozzila.com
+0.0.0.0 firefox.settings.services.mozilla.com
+0.0.0.0 mitmdetection.services.mozilla.com
+0.0.0.0 services.addons.mozilla.org
+0.0.0.0 shavar.services.mozilla.com
+

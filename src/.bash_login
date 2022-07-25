@@ -1,0 +1,38 @@
+# This file is part of `EduRouter tools'
+
+source "$HOME/.bashrc"
+PATH="$HOME/.local/bin:$PATH"
+
+# aliases
+alias l='ls -la'
+alias ip='ip -c'
+alias mc='mc --nosubshell'
+alias matrix='cmatrix -b'
+alias M='matrix'
+alias m="er-menu"
+
+# do once, when system is turned on (or rebooted)
+if ! [[ -f /tmp/.er-check ]]; then
+   # have some fun on the very first login
+   matrix
+   # we shouldn't offer PDF reports from previous sessions to download
+   if [[ $(ls /var/www/workshop/report/* 2> /dev/null) ]] ||
+      [[ $(ls "$HOME"/.cache/edurouter/* 2> /dev/null) ]] ||
+      [[ $(ls "$HOME"/.cache/termshark/pcaps/* 2> /dev/null) ]]; then
+      whiptail \
+         --title "Privacy warning" \
+         --yes-button " Yes " \
+         --no-button " No " \
+         --yesno "There are network captures and/or PDF reports stored from previous sessions.\n\nDelete them now?" \
+         0 0 3>&1 1>&2 2>&3
+      if [[ $? -eq 0 ]]; then
+         rm /var/www/workshop/report/* 2> /dev/null
+         rm "$HOME"/.cache/edurouter/* 2> /dev/null
+         rm "$HOME"/.cache/termshark/pcaps/* 2> /dev/null
+      fi
+      clear
+   fi
+   touch /tmp/.er-check
+fi
+
+er-menu

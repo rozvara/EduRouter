@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+MSG=
+
+# Stop running instance, if any
+PID=$(sudo berate_ap --list-running | grep ^[0-9] | cut -d' ' -f1)
+if [ "$PID" != "" ]; then
+   MSG=0
+   echo "[StopAP] Trying to stop AP service..."
+   sudo berate_ap --stop "$PID" > /dev/null 2>&1
+   sleep 5
+else
+   if [[ "$1" == "--verbose" ]]; then
+      echo "[StopAP] No AP service is running."
+   fi
+fi
+
+# Sometimes hostapd/dnsmasq doesn't exit or socket remains
+if [[ $(pidof hostapd) ]] || [[ $(pidof hostapd-mana) ]] || [[ $(pidof dnsmasq) ]]; then
+   MSG=0
+   echo "[StopAP] Killing running services..."
+   sudo killall hostapd > /dev/null 2>&1
+   sudo killall hostapd-mana > /dev/null 2>&1
+   sudo killall dnsmasq > /dev/null 2>&1
+fi
+sudo rm -f /tmp/create_ap.*.lock > /dev/null 2>&1
+
+# stop dumpcap started with AP
+PROC=$(ps -ef)
+PID=$(printf '%s\n' "$PROC" | grep -e "dumpcap.*cache/edurouter" | awk -F ' ' '{print $2}')
+if [[ $PID ]]; then
+   echo "[StopAP] Stopping traffic recording..."
+   kill $PID
+   sleep 1
+fi
+
+[[ $MSG ]] && echo "[StopAP] Stopped."

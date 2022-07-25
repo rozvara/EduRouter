@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+PROGNAME="$(basename $0)"
+
+usage() {
+    echo "Usage: $PROGNAME OPTION"
+    echo
+    echo "Options:"
+    echo "   -d, --dhcp      Use DHCP to connect"
+    echo "   -s, --static    Use settings from config file"
+    exit 1
+}
+
+IP_CONFIG=
+
+GETOPT_ARGS=$(getopt -o ds -l "dhcp,static" -n "$PROGNAME" -- "$@")
+[[ $? -ne 0 ]] && usage
+eval set -- "$GETOPT_ARGS"
+while :; do
+    case "$1" in
+        -d|--dhcp)
+            shift
+            [[ $IP_CONFIG ]] && usage
+            IP_CONFIG="DHCP"
+            ;;
+        -s|--static)
+            shift
+            [[ $IP_CONFIG ]] && usage
+            IP_CONFIG="STATIC"
+            ;;
+        --)
+            [[ ! $IP_CONFIG ]] && usage
+            break
+            ;;
+    esac
+done
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+# when WAN is over wifi, connect using credentials in config
+WAN_OVER_WIFI=$(sudo iw dev | awk '$1=="Interface"{print $2}' | grep "$ER_WAN_IFACE")
+
+if [[ $WAN_OVER_WIFI ]]; then
+
+   if [[ ! $ER_HOST_SSID ]]; then
+      echo "[WAN] Error. No SSID specified to connect using wireless interface '${ER_WAN_IFACE}'. Please edit configuration."
+      exit 1
+   fi
+
+   HOST_SSID=$(echo "$ER_HOST_SSID" | xxd -p -r)
+   HOST_PSK=$(echo "$ER_HOST_PSK" | xxd -p -r)
+
+   set -f
+   echo "[WAN] Connecting to network using wireless interface '${ER_WAN_IFACE}' and SSID '${HOST_SSID}'..."
+
+   # clean not well terminated previous services, if any
+   sudo ip link set "$ER_WAN_IFACE" down
+   sudo killall wpa_supplicant > /dev/null 2>&1
+   sudo ip link set "$ER_WAN_IFACE" up
+
+   # create config file for wpa supplicant
+   CONF_FILE="/tmp/.edurouter-wpasupplicant.conf"
+   sudo rm -f "$CONF_FILE" > /dev/null 2>&1
+   echo "ctrl_interface=/run/wpa_supplicant" > "$CONF_FILE"
+   echo "update_config=1" >> "$CONF_FILE"
+   # TODO: test for weird chars like " in ssid
+   wpa_passphrase "$HOST_SSID" "$HOST_PSK" >> "$CONF_FILE"
+
+   # run wpa_supplicant to connect to wifi and get IP address
+   sudo wpa_supplicant -B -i "$ER_WAN_IFACE" -c "$CONF_FILE"
+   set +f
+
+   # TODO: waiting for link
+   # TODO: check status/connection
+
+   sleep 8
+else
+   echo "[WAN] Connecting to network on interface '${ER_WAN_IFACE}'..."
+fi
+
+if [[ "$IP_CONFIG" == "DHCP" ]]; then
+   er-wan-dhcp
+else
+   er-wan-static-ip
+fi
+
+# TODO: check link, check ip address, return exit codes
+
+# check DNS
+echo "[WAN] Testing DNS service..."
+if dig example.org > /dev/null; then
+   echo "[WAN] DNS OK."
+else
+   echo "[WAN] DNS service is not working, please check settings."
+fi
+
+# check ping to default gateway
+GW=$(ip route list | awk '$1=="default"{print $3}')
+MSG="Ping to default gateway $GW -"
+if ping -c 4 $GW > /dev/null; then
+   echo "[WAN] $MSG OK."
+else
+   echo "[WAN] $MSG FAILED. Check settings."
+fi
+
+# check ping to internet
+MSG="Ping to internet (example.org) - "
+if ping -c 4 example.org > /dev/null; then
+   echo "[WAN] $MSG OK."
+else
+   echo "[WAN] $MSG FAILED. Check internet connection."
+fi
+
+# TODO: check WAN IP subnet not conflicting with AP IP
+
+echo "[WAN] Done."

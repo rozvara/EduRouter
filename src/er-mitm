@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+PROGNAME="$(basename $0)"
+
+usage() {
+    echo "Usage: $PROGNAME [option]"
+    echo
+    echo "Options:"
+    echo "   -p, --proxy     Run transparent proxy and interactive mitmproxy"
+    echo "   -r, --redirect  mitmdump with redirection (redirect.py)"
+    echo "   -i, --images    mitmdump with images flipping script"
+    exit 1
+}
+
+PROXY=
+ATTACK=
+TYPE=
+
+GETOPT_ARGS=$(getopt -o "pri" -l "proxy,redirect,images" -n "$PROGNAME" -- "$@")
+[[ $? -ne 0 ]] && usage
+eval set -- "$GETOPT_ARGS"
+while :; do
+    case "$1" in
+        -p|--proxy)
+            PROXY=0
+            break
+            ;;
+        -r|--redirect)
+            ATTACK=0
+            TYPE="redirect"
+            break
+            ;;
+        -i|--images)
+            ATTACK=0
+            TYPE="images"
+            break
+            ;;
+        --)
+            usage
+            ;;
+    esac
+done
+
+PROC=$(ps -ef)
+WHERE=$(printf '%s\n' "$PROC" | grep "mitmproxy\|mitmdump" | awk -F ' ' '{print $6}')
+
+if [[ $WHERE ]] ; then
+   echo "[MITM] Error: mitmproxy or mitmdump is already running at ${WHERE}."
+   exit 1
+fi
+
+# save iptables to restore rules later
+RULES="/tmp/.iptables-accesspoint.rules"
+rm "$RULES" > /dev/null 2>&1
+sudo iptables-save > "$RULES"
+
+echo "[MITM] Preparing proxy service..."
+
+# Enable forwarding
+sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
+
+# not tested (berate_ap and so on) with IPv6 yet
+# sysctl -w net.ipv6.conf.all.forwarding=1
+
+# If test device is on the same physical network, your machine shouldn’t inform
+# the device that there’s a shorter route available by skipping the proxy.
+sudo sysctl -w net.ipv4.conf.all.send_redirects=0 > /dev/null
+
+# route packets to mitmproxy's listening port
+sudo iptables -t nat -A PREROUTING -i $ER_WIFI_IFACE -p tcp --dport 80 -j REDIRECT --to-port 8080
+sudo iptables -t nat -A PREROUTING -i $ER_WIFI_IFACE -p tcp --dport 443 -j REDIRECT --to-port 8080
+sudo iptables -t nat -A POSTROUTING -o $ER_WAN_IFACE -j MASQUERADE
+
+# reject SSL UDP packets to force device to fallback to TCP
+sudo iptables -I FORWARD -p udp --dport 443 -j REJECT
+
+# to check PREROUTING chaing in nat table `sudo iptables -L -t nat`
+
+if [[ $PROXY ]]; then
+   # run mitmproxy+tui
+   mitmproxy --mode transparent --showhost --ssl-insecure
+   RETURN="$?"
+
+#elif [[ $ATTACK ]]; then
+elif [[ "$TYPE" == "images" ]]; then
+   # run mitmdump with python script
+   mitmdump --mode transparent --showhost --ssl-insecure -s "$HOME/.config/edurouter/flip-images.py"
+   RETURN="$?"
+
+elif [[ "$TYPE" == "redirect" ]]; then
+   # run mitmdump with python script
+   # if no DNS spoofing used, it should work against example.com
+
+   # block ALL DNS querries from AP clients to internet to prevent bypassing our poisoned DNS
+   sudo iptables -I FORWARD -i $ER_WIFI_IFACE -p udp ! -d "${ER_AP_IP}/24" --dport 53 -j REJECT
+   sudo iptables -I FORWARD -i $ER_WIFI_IFACE -p tcp ! -d "${ER_AP_IP}/24" --dport 53 -j REJECT
+
+   # create poisoned hosts
+   er-dns-mode --attack
+
+   # check if www.example.org is present in hosts file
+   # as it may be expected in redirect.py
+   PY_SCRIPT="$HOME/.config/edurouter/redirect.py"
+
+   ERR=
+   TEST_IP=$(awk -F ' ' '$2=="www.example.org"{print $1}' /tmp/er-hosts)
+   if [[ ! "$TEST_IP" ]]; then
+      ERR=1
+   else
+      TEST=$(grep "$TEST_IP" "$PY_SCRIPT")
+      if [[ ! "$TEST" ]]; then
+         ERR=1
+      fi
+   fi
+   if [[ "$ERR" ]]; then
+      echo -e "\n\n[MITM] WARNING: Spoofed IP of www.example.org in hosts file doesn't match redirect.py script."
+      echo -e "       DNS spoofing may not work.\n\n"
+   fi
+
+   # TODO: check fakeweb URL
+
+   mitmdump --mode transparent --showhost --ssl-insecure -s "$PY_SCRIPT"
+   RETURN="$?"
+   sleep 1
+
+   echo -e "\n\n[MITM] Setting DNS resolver to normal state..."
+   er-dns-mode --normal
+fi
+
+sudo iptables-restore < "$RULES"
+
+exit "$RETURN"

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+PROGNAME="$(basename $0)"
+
+usage() {
+    echo "Usage: $PROGNAME OPTION"
+    echo
+    echo "Options:"
+    echo "   -n, --normal    Empty hosts file"
+    echo "   -a, --attack    Modified hosts for DNS spoofing demo"
+    echo "   -b, --blockads  Modified hosts for Ads blocking"
+    exit 1
+}
+
+NORMAL=
+ATTACK=
+ADBLOCK=
+PARAM=N
+
+GETOPT_ARGS=$(getopt -o nab -l "normal,attack,blockads" -n "$PROGNAME" -- "$@")
+[[ $? -ne 0 ]] && usage
+eval set -- "$GETOPT_ARGS"
+while :; do
+    case "$1" in
+        -n|--normal)
+            shift
+            NORMAL=0; PARAM=
+            ;;
+        -a|--attack)
+            shift
+            ATTACK=0; PARAM=
+            ;;
+        -b|--blockads)
+            shift
+            ADBLOCK=0; PARAM=
+            ;;
+        --)
+            [[ $PARAM ]] && usage
+            break
+            ;;
+    esac
+done
+
+source "$HOME/.config/edurouter/edurouter.conf"
+
+CONFIG_PATH="$HOME/.config/edurouter"
+
+# DO NOT CHANGE AS IT'S USED ON OTHER PLACES AS WELL
+AP_HOSTS_FILE="/tmp/er-hosts"
+rm "$AP_HOSTS_FILE" > /dev/null 2>&1
+
+# create new (empty) hosts file (NORMAL option) with webserver url
+WEB_URL=$(awk '$1=="$HTTP[\"host\"]" {s=$3; gsub("\"","",s); print s}' /etc/lighttpd/conf-available/edurouter.conf)
+echo "$ER_AP_IP  $WEB_URL" > "$AP_HOSTS_FILE"
+
+#
+# TODO Check files to be added exists
+#
+
+update_system_hosts_file() {
+HOSTNAME=$(cat /etc/hostname)
+cat << EOF | sudo tee /etc/hosts > /dev/null
+# defaults in 'er-dns-mode'
+127.0.0.1  localhost
+127.0.1.1  $HOSTNAME
+::1        localhost ip6-localhost ip6-loopback
+ff02::1    ip6-allnodes
+ff02::2    ip6-allrouters
+
+# parameters passed to 'er-dns-mode'
+$1  $2
+EOF
+}
+
+# add records
+if [[ $ATTACK ]]; then
+   echo "[DNS] spoofing ON - creating spoofed DNS records..."
+   echo -e "\n# adding hosts to simulate DNS attack\n" | tee -a "$AP_HOSTS_FILE" > /dev/null
+   cat "$CONFIG_PATH/attack.hosts" | tee -a "$AP_HOSTS_FILE" > /dev/null
+
+   # local webserver to system hosts file and Wifi AP hosts file
+   WAN_IP=$(ip addr show dev $ER_WAN_IFACE | awk '$1=="inet"{print $2}' | cut -d "/" -f 1)
+   FAKEWEB_URL=$(awk '$1=="$HTTP[\"host\"]" {s=$3; gsub("\"","",s); print s}' /etc/lighttpd/conf-available/fakeweb.conf | grep -v "*")
+
+   echo -e "\n# script 'er-mitm' added temporarily fakeweb url\n$WAN_IP  $FAKEWEB_URL\n" | tee -a "$AP_HOSTS_FILE" > /dev/null
+
+   update_system_hosts_file "$WAN_IP" "$FAKEWEB_URL"
+
+elif [[ $ADBLOCK ]]; then
+   echo "[DNS] Ads blocking ON - adding blocked DNS records..."
+   echo -e "\n# adding hosts to show DNS Ads blocking\n" | tee -a "$AP_HOSTS_FILE" > /dev/null
+   cat "$CONFIG_PATH/adblock.hosts" | tee -a "$AP_HOSTS_FILE" > /dev/null
+
+   # adblock: no modif to system hosts
+   update_system_hosts_file
+
+else
+   # normal: no modif to system hosts
+   update_system_hosts_file
+fi
+
+# restart runnig dns resolver
+if pidof dnsmasq; then
+   sudo killall -HUP dnsmasq
+   echo "[DNS] Resolver restarted."
+fi

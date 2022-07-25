@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+echo "[StaticIP] Setting IP of WAN interface '${ER_WAN_IFACE}'..."
+
+if [[ $ER_WAN_IFACE ]]; then
+   sudo ip link set "$ER_WAN_IFACE" up
+   sleep 0.1
+   # remove current setting
+   sudo ip route flush table main
+   sudo ip address flush dev "$ER_WAN_IFACE"
+   sleep 0.1
+   # TODO: check not empty
+   # set IP, route and DNS
+   sudo ip address replace "$ER_STATIC_IP" dev "$ER_WAN_IFACE"
+   sudo ip route add "$ER_STATIC_SUBNET" via "$ER_STATIC_IP"
+   sudo ip route add "$ER_STATIC_GW" dev "$ER_WAN_IFACE"
+   sudo ip route add default dev "$ER_WAN_IFACE" via "$ER_STATIC_GW"
+   echo "# set by er-wan-static-ip" | sudo tee /etc/resolv.conf > /dev/null
+   [[ $ER_STATIC_DNS1 ]] && echo "nameserver $ER_STATIC_DNS1" | sudo tee -a /etc/resolv.conf > /dev/null
+   [[ $ER_STATIC_DNS2 ]] && echo "nameserver $ER_STATIC_DNS2" | sudo tee -a /etc/resolv.conf > /dev/null
+
+else
+   echo "[StaticIP] Error. No WAN interface specified. Please edit configuration."
+   exit 1
+fi
+
+# show results
+echo "[StaticIP] Current network settings on '${ER_WAN_IFACE}':"
+ip address show "$ER_WAN_IFACE" | grep inet | awk $'{print "           IP address/subnet: " $2}'
+GW=$(ip route list | awk '$1=="default"{print $3}' | head -1)
+echo "           Default gateway: $GW"
+cat /etc/resolv.conf | awk '$1=="nameserver"{print "           DNS server: " $2}'
+echo "[StaticIP] Finished."
+exit 0

@@ -1,0 +1,724 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# main menu to control EduRouter settings and tools
+
+# License: GNU GPLv2
+# Author: Jiri Rozvaril <rozvara at vync dot org>
+
+
+quit_menu() {
+   clear
+   echo -e "\nEnter 'm' for EduRouter menu, 'exit' for logout or any other command you wish...\n"
+   exit 0
+}
+
+press_enter() {
+   echo
+   read -s -p "Press 'Enter' to continue..."
+}
+
+whiptail_message() {
+   whiptail \
+      --backtitle "$ER_EVENT_NAME" \
+      --title "$1" \
+      --ok-button " Ok " \
+      --msgbox "$2" 0 0
+}
+
+whiptail_yesno() {
+   whiptail \
+      --backtitle "$ER_EVENT_NAME" \
+      --title "$1" \
+      --yes-button " Yes " \
+      --no-button " No " \
+      --defaultno \
+      --yesno "$2" 0 0 3>&1 1>&2 2>&3
+   echo $?
+}
+
+where_is_running() {
+   if [[ "$1" ]]; then
+      WHERE=$(printf '%s\n' "$PROC" | grep "$1" | awk -F ' ' '{print $6}' | uniq | sort)
+      if [[ "$WHERE" ]]; then
+         if [[ "$WHERE" =~ ^?.* ]]; then
+            echo "RUNNING"
+         else
+            echo "RUNNING at" "$(printf '%s\n' "$WHERE" | tr '\n' ' ' | sed 's:?:background:')"
+         fi
+         return 0
+      else
+         echo "stopped"
+      fi
+   else
+      # error, eg. when not installed
+      echo "error!"
+   fi
+   return 1
+}
+
+is_ap_running() {
+   # when AP is running, we want to show other options
+   if pidof hostapd >/dev/null; then
+      AP_STATE="RUNNING"
+      AP_MODE="AP"
+   # when MANA-AP is running, inform about it; allow to turn regular AP on
+   elif pidof hostapd-mana >/dev/null; then
+      WHERE=$(printf '%s\n' "$PROC" | grep "hostapd-mana" | awk -F ' ' '{print $6}')
+      AP_STATE="RUNNING MANA AP at $WHERE"
+      AP_MODE="MANA"
+   else
+      AP_STATE="stopped"
+      AP_MODE=
+   fi
+}
+
+is_capture_running() {
+   # only our dumpcap, not others (eg. wireowl, termshark)
+   PID=$(printf '%s\n' "$PROC" | grep -e "dumpcap.*cache/edurouter" | awk -F ' ' '{print $2}')
+   if [[ $PID ]]; then
+      CAPTURE_STATE="RUNNING"
+   else
+      CAPTURE_STATE="no"
+   fi
+}
+
+menu_item() {
+   if [[ "$1" == "" ]]; then
+      # empty menu item as visual separator (two spaces)
+      echo -e "\xC2\xA0" "\xC2\xA0"
+   else
+      # convert spaces to nonbreakable spaces
+      echo -n -e "$1" " "
+      echo -n -e "$2" | sed 's/\ /\xC2\xA0/g'
+      echo " "
+   fi
+}
+
+menu_content() {
+   menu_item "0" "Refresh menu status"
+   if [[ ! "$AP_MODE" ]]; then
+      menu_item "1" "WiFi AP '$ER_AP_SSID'"
+      menu_item "f" "Open WiFi AP 'Free Wifi'"
+      menu_item "z" "Rogue AP showing 'Probe Requests'"
+   fi
+   if [[ "$AP_MODE" == "AP" ]]; then
+      menu_item "2" "Watch activity of connected devices"
+      menu_item "3" "List of connected devices"
+      menu_item "p" "Proxy reading HTTPS traffic"
+      menu_item "r" "Redirect/MitM attack"
+      menu_item "i" "Images/MitM attack"
+      # menu_item "6" "Start/Stop DNS AdBlocker"
+      menu_item
+      # TODO: don't show for free wifi
+      menu_item "q" "QR code for WiFi '$ER_AP_SSID'"
+      menu_item "7" "Create PDF reports with devices activity"
+   fi
+   if [[ "$AP_MODE" ]]; then
+      menu_item "8" "Turn off WiFi access point"
+   fi
+   menu_item
+   if [[ ! "$AP_MODE" ]]; then
+      menu_item "n" "Network and workshop settings"
+   fi
+   menu_item "s" "System"
+}
+
+escape_qr_chars() {
+   # escape characters :;,"\ for WiFi QR code text
+   set -f
+   OUT="$1"
+   OUT=$(echo "$OUT" | sed 's/\\/\\\\/g')
+   OUT=$(echo "$OUT" | sed 's/:/\\:/g')
+   OUT=$(echo "$OUT" | sed 's/;/\\;/g')
+   OUT=$(echo "$OUT" | sed 's/,/\\,/g')
+   OUT=$(echo "$OUT" | sed 's/\"/\\"/g')
+   echo "$OUT"
+   set +f
+}
+
+remove_cntl_chars() {
+   # remove chars preventing storing quoted value and prevent bash expansion/code exec
+   set -f
+   echo "$1" | tr -d '"*$`[:cntrl:]'
+   set +f
+}
+
+main_menu() {
+   while true; do
+      PROC=$(ps -ef)
+      is_ap_running
+      is_capture_running
+      WO_STATE="$(where_is_running $(which wireowl))"
+      MTM_STATE="$(where_is_running $(which mitmproxy))/$(where_is_running $(which mitmdump))"
+      CONNECTIONS="$(who | awk -F ' ' '{print $2}' | sort | uniq | tr '\n' ' ')"
+
+      # TODO
+      DNS_STATE=
+
+      MENU_STATUS=$( \
+         echo; \
+         echo "Wi-Fi access point: $AP_STATE"; \
+         echo "Traffic capture:    $CAPTURE_STATE"; \
+         if [[ "$DNS_STATE" ]]; then
+            echo "DNS:                $DNS_STATE"; \
+         fi
+         echo "Activity monitor:   $WO_STATE"; \
+         echo "MitM proxy/attack:  $MTM_STATE"; \
+         echo; \
+         echo "Open terminals:     $CONNECTIONS"; \
+         echo; \
+         echo "What would you like?             This terminal: $(tty | sed -e 's:/dev/::')" )
+
+      exec 3>&1
+      CHOICE=$(whiptail \
+         --backtitle "$ER_EVENT_NAME" \
+         --title "EduRouter" \
+         --ok-button " Select " \
+         --cancel-button " Quit " \
+         --notags \
+         --menu "$MENU_STATUS" 0 0 0 $(menu_content) \
+         2>&1 1>&3)
+      EXIT_STATUS=$?
+      exec 3>&-
+
+      case $EXIT_STATUS in
+         $DIALOG_CANCEL)
+            quit_menu
+            ;;
+         $DIALOG_ESC)
+            quit_menu
+            ;;
+      esac
+
+      case $CHOICE in
+         0)
+            clear
+            ;;
+         1)
+            clear
+            er-ap-mode --normal
+            press_enter
+            ;;
+         f)
+            clear
+            er-ap-mode --open
+            press_enter
+            ;;
+         z)
+            clear
+            er-ap-mode --probe
+            press_enter
+            ;;
+         2)
+            wireowl -i "$ER_WIFI_IFACE"
+            ;;
+         3)
+            clear
+            watch er-list-ap-clients
+            ;;
+         p)
+            clear
+            er-mitm --proxy
+            [[ $? -ne 0 ]] && press_enter
+            ;;
+         r)
+            clear
+            er-mitm --redirect
+            press_enter
+            ;;
+         i)
+            clear
+            er-mitm --images
+            press_enter
+            ;;
+         6)
+            clear
+            er-dns-mode --blockads
+            press_enter
+            ;;
+         q)
+            clear
+            set -f
+            QRSSID=$(escape_qr_chars "$ER_AP_SSID")
+            QRPSK=$(escape_qr_chars "$ER_AP_PSK")
+            qrencode -t ansi "WIFI:T:WPA;S:${QRSSID};P:${QRPSK};;"
+            read -s -n 1 -p "SSID: $ER_AP_SSID   Passphrase: $ER_AP_PSK"
+            set +f
+            ;;
+         7)
+            if [[ $(ls "$HOME/.cache/edurouter/"*.pcapng | wc -l) -eq 0 ]]; then
+               whiptail_message \
+                  "PDF report" \
+                  "There are no files with recorded traffic. Nothing to do."
+            else
+               files=
+               i=0
+               s=1
+               for f in "$HOME/.cache/edurouter/"*.pcapng
+               do
+                  files[i]="$s"  # tag: number
+                  files[i+1]="$f"  # item: filename
+                  ((s+=1))
+                  ((i+=2))
+               done
+
+               exec 3>&1
+               file=$(whiptail \
+                  --backtitle "$ER_EVENT_NAME" \
+                  --title "PDF reports of network traffic" \
+                  --notags \
+                  --menu "\nSelect file to generate from" 0 0 0 "${files[@]}" \
+                  2>&1 1>&3)
+               EXIT_STATUS=$?
+               exec 3>&-
+
+               if [[ $EXIT_STATUS == $DIALOG_CANCEL ]] || [[ $EXIT_STATUS == $DIALOG_ESC ]]; then
+                  clear
+               else
+                  ((i=2*(file-1)))
+                  FILE="${files[i+1]}"
+                  # check if dumpcap is writing into selected file
+                  PROC=$(ps -ef)
+                  PID=$(printf '%s\n' "$PROC" | grep -e "dumpcap.*$FILE" | awk -F ' ' '{print $2}')
+                  if [[ $PID ]]; then
+                     if [[ "0" == $(whiptail_yesno "Warning" \
+                        "You can create reports while still capturing into file selected, although most recent data might be missing.\nShould the capture be stopped so that nothing is missing?") ]]; then
+                        kill $PID
+                        sleep 1
+                     fi
+                  fi
+                  clear
+                  echo "Selected file: $FILE"
+                  cd /tmp
+                  pcap2pdf "$FILE"
+                  # copy reports to web server folder, make it readable by webserver and removable by user
+                  echo "Copying PDF reports to local web server..."
+                  find /tmp -name "pcap2pdf*.pdf" -exec sudo cp {} /var/www/workshop/report \; 2> /dev/null
+                  sudo chown --recursive "$USER":www-data /var/www/workshop/report/
+                  echo
+                  echo "Finished."
+                  echo
+                  WEB_URL=$(awk '$1=="$HTTP[\"host\"]" {s=$3; gsub("\"","",s); print s}' /etc/lighttpd/conf-available/edurouter.conf)
+                  echo "While still being connected to this AP, people may open http://$WEB_URL to download PDF reports."
+                  press_enter
+               fi
+            fi
+            ;;
+         8)
+            clear
+            er-turnoff-ap --verbose
+            press_enter
+            ;;
+         n)
+            config_menu
+            ;;
+         s)
+            system_menu
+            ;;
+      esac
+   done
+}
+
+config_menu() {
+   while true; do
+      exec 3>&1
+      CHOICE=$(whiptail \
+         --backtitle "$ER_EVENT_NAME" \
+         --title "EduRouter settings" \
+         --ok-button " Select " \
+         --cancel-button " Back " \
+         --notags \
+         --menu "\nWhat would you like?" 0 0 0 \
+         "c" "Connect to WAN on $ER_WAN_IFACE using DHCP" \
+         "s" "Connect to WAN on $ER_WAN_IFACE using static IP" \
+         " " " " \
+         "t" "Test internet connection and speed (WAN)" \
+         "k" "Show WAN 'ip address' and 'ip route'" \
+         " " " " \
+         "i" "Select interface for Wi-Fi AP and WAN" \
+         "w" "Set AP SSID and passphrase (and have fun with them :)" \
+         "e" "Manually edit configuration file" \
+         " " " " \
+         "p" "Delete all PDF reports and traffic captures" \
+         2>&1 1>&3)
+      EXIT_STATUS=$?
+      exec 3>&-
+
+      case $EXIT_STATUS in
+         $DIALOG_CANCEL)
+            break
+            ;;
+         $DIALOG_ESC)
+            break
+            ;;
+      esac
+
+      case $CHOICE in
+         c)
+            clear
+            er-connect-wan --dhcp
+            press_enter
+            ;;
+         s)
+            clear
+            er-connect-wan --static
+            press_enter
+            ;;
+         t)
+            clear
+            speedtest-cli
+            press_enter
+            ;;
+         k)
+            clear
+            ip -color address show dev "$ER_WAN_IFACE"
+            echo
+            ip -color route
+            echo
+            press_enter
+            ;;
+         i)
+            set_interfaces
+            source_config
+            ;;
+         w)
+            MSG='\nSpecial characters such as " $ * ` will be ignored.'
+
+            SSID="$ER_AP_SSID"
+            NOT_OK=true
+            while $NOT_OK; do
+               INPUT=$(whiptail \
+                  --backtitle "$ER_EVENT_NAME" \
+                  --title "AP Name" \
+                  --nocancel \
+                  --inputbox "\nEnter SSID (WiFi name) 3 to 15 characters long.$MSG" 0 0 "$SSID" \
+                  3>&1 1>&2 2>&3)
+               SSID=$(remove_cntl_chars "$INPUT")
+               [[ ${#SSID} -ge 3 ]] && [[ ${#SSID} -le 15 ]] && NOT_OK=false
+            done
+            sed -i -r "s/^(ER_AP_SSID=).*/\1\"$SSID\"/" "$CONFIGFILE"
+
+            PSK="$ER_AP_PSK"
+            NOT_OK=true
+            while $NOT_OK; do
+               INPUT=$(whiptail \
+                  --backtitle "$ER_EVENT_NAME" \
+                  --title "AP Passphrase" \
+                  --nocancel \
+                  --inputbox "\nEnter WiFi passphrase 8 to 15 characters long.$MSG" 0 0 "$PSK" \
+                  3>&1 1>&2 2>&3)
+               PSK=$(remove_cntl_chars "$INPUT")
+               [[ ${#PSK} -ge 8 ]] && [[ ${#PSK} -le 15 ]] && NOT_OK=false
+            done
+            sed -i -r "s/^(ER_AP_PSK=).*/\1\"$PSK\"/" "$CONFIGFILE"
+            source_config
+            ;;
+         e)
+            nano "$CONFIGFILE"
+            source_config
+            ;;
+         p)
+            clear
+            echo "Deleting PDF files from local web server..."
+            rm /var/www/workshop/report/* 2> /dev/null
+            echo "Deleting traffic captures..."
+            rm "$HOME"/.cache/edurouter/* 2> /dev/null
+            rm "$HOME"/.cache/termshark/pcaps/* 2> /dev/null
+            echo
+            press_enter
+            ;;
+      esac
+   done
+}
+
+system_menu() {
+   while true; do
+      exec 3>&1
+      CHOICE=$(whiptail \
+         --backtitle "$ER_EVENT_NAME" \
+         --title "System" \
+         --ok-button " Select " \
+         --cancel-button " Back " \
+         --notags \
+         --menu "\nWhat would you like?" 0 0 0 \
+         "ht" "htop            running procesess" \
+         "mc" "mc              file manager" \
+         "ip" "ip              network interfaces configuration" \
+         "ix" "inxi            computer/system information" \
+         " "  " " \
+         "tw" "termshark WAN   packet analyzer on $ER_WAN_IFACE" \
+         "aw" "arp       WAN   current ARP table of $ER_WAN_IFACE" \
+         "sw" "arp-scan  WAN   scan devices on $ER_WAN_IFACE" \
+         " "  " " \
+         "ta" "termshark AP    packet analyzer on $ER_WIFI_IFACE" \
+         "aa" "arp       AP    current ARP table of $ER_WIFI_IFACE" \
+         "sa" "arp-scan  AP    scan devices on $ER_WIFI_IFACE" \
+         " "  " " \
+         "us"  "Update system and apps" \
+         "ue"  "Update EduRouter (backup your changes first!)" \
+         "f"   "Change terminal font/size" \
+         " "   " " \
+         "s"   "Power off system" \
+         "r"   "Reboot system" \
+         2>&1 1>&3)
+
+      EXIT_STATUS=$?
+      exec 3>&-
+
+      case $EXIT_STATUS in
+         $DIALOG_CANCEL)
+            break
+            ;;
+         $DIALOG_ESC)
+            break
+            ;;
+      esac
+
+      case $CHOICE in
+         ht)
+            htop
+            ;;
+         mc)
+            clear
+            mc --nosubshell
+            ;;
+         ix)
+            clear
+            sudo inxi -FiJxxxc5 | pager -R
+            ;;
+         ip)
+            clear
+            ip -color address
+            echo
+            ip -color route
+            echo
+            press_enter
+            ;;
+         tw)
+            clear
+            termshark -i $ER_WAN_IFACE
+            # TODO exit status? failed? Press enter
+            ;;
+         aw)
+            clear
+            sudo arp -v -e -i $ER_WAN_IFACE | pager
+            ;;
+         sw)
+            clear
+            sudo arp-scan -I $ER_WAN_IFACE -l | pager
+            ;;
+         ta)
+            clear
+            termshark -i $ER_WIFI_IFACE
+            # TODO exit status? failed? Press enter
+            ;;
+         aa)
+            clear
+            sudo arp -v -e -i $ER_WIFI_IFACE | pager
+            ;;
+         sa)
+            clear
+            sudo arp-scan -I $ER_WIFI_IFACE -l | pager
+            ;;
+         us)
+            clear
+            echo "'apt update'"
+            sudo apt update
+            echo -e "\n'apt upgrade'"
+            sudo apt upgrade --yes
+            #
+            cd /tmp
+            rm -rf wireowl
+            git clone https://github.com/rozvara/wireowl.git
+            cd wireowl
+            chmod +x install.sh
+            ./install.sh
+            #
+            cd /tmp
+            rm -rf pcap2pdf
+            git clone https://github.com/rozvara/pcap2pdf.git
+            cd pcap2pdf
+            chmod +x install.sh
+            ./install.sh
+            #
+            cd
+            echo -e "\n'apt autoremove'"
+            sudo apt autoremove --yes
+            press_enter
+            ;;
+         ue)
+            clear
+            echo "'EduRouter update'"
+            cd /tmp
+            rm -rf EduRouter
+            git clone https://github.com/rozvara/EduRouter.git
+            cd EduRouter/src
+            mv -f *.hosts "$HOME/.config/edurouter/"
+            mv -f *.py "$HOME/.config/edurouter/"
+            mv -f .bash_login "$HOME/"
+            mv -f er-* "$HOME/.local/bin/"
+            chmod +x "$HOME/.local/bin/"*
+            cd
+            press_enter
+            ;;
+         f)
+            clear
+            sudo dpkg-reconfigure console-setup
+            ;;
+         s)
+            clear
+            sudo poweroff
+            ;;
+         r)
+            clear
+            sudo reboot
+            ;;
+      esac
+   done
+}
+
+set_interfaces() {
+   # select wireless interface
+   IFACES=$(sudo iw dev | awk '$1=="Interface"{print $2 " " $2}')
+   if [[ ! $IFACES ]]; then
+      whiptail_message \
+         "Error" \
+         "It looks like there is no wireless interface.\nCannot continue without it."
+      exit 1
+   fi
+   IFACESELECTED=$(whiptail \
+      --backtitle "$ER_EVENT_NAME" \
+      --title "Wireless interface" \
+      --notags \
+      --nocancel \
+      --menu "\nSelect wireless interface to run access point on:" 0 0 0 \
+      $IFACES \
+      3>&1 1>&2 2>&3 )
+   QUOTEDIFACE='"'$IFACESELECTED'"'
+   sed -i -r "s/^(ER_WIFI_IFACE=).*/\1$QUOTEDIFACE/" "$CONFIGFILE"
+
+   # select interface for wan from those which has left
+   IFACES=$(ip address | awk '($1~/:$/){print $2" "$2}' | grep --invert-match "lo:" | grep --invert-match "$IFACESELECTED" | sed 's/://g')
+   if [[ ! $IFACES ]]; then
+      whiptail_message \
+         "Error" \
+         "It looks like there is no other network interface for internet connection.\nCannot continue without it."
+      exit 1
+   fi
+   IFACESELECTED=$(whiptail \
+      --backtitle "$ER_EVENT_NAME" \
+      --title "WAN interface" \
+      --notags \
+      --nocancel \
+      --menu "\nSelect network interface for internet connection:" 0 0 0 \
+      $IFACES \
+      3>&1 1>&2 2>&3 )
+   QUOTEDIFACE='"'$IFACESELECTED'"'
+   sed -i -r "s/^(ER_WAN_IFACE=).*/\1$QUOTEDIFACE/" "$CONFIGFILE"
+
+   # if WAN is wireless interface, ask for SSID and passphrase
+   if [[ $(sudo iw dev | awk '$1=="Interface"{print $2}' | grep "$IFACESELECTED") ]]; then
+      whiptail \
+         --backtitle "$ER_EVENT_NAME" \
+         --title "Wireless network" \
+         --infobox "\nSearching for available wireless networks..." 8 0
+      sudo ip link set "$IFACESELECTED" up
+      sleep 2
+      # wifi names can contain $(cmd), * and so on, so play safe
+      set -f
+      IFS=$'\n'
+      WLANS=$(sudo iw dev "$IFACESELECTED" scan | grep "SSID:" | sed -r "s/.*SSID: //" | sort -u | grep -v "^[[:space:]]*$")
+      readarray -d "$IFS" -t WLANARR <<< "$WLANS"
+      IFS=' '
+      if [[ $WLANS ]]; then
+         # select wireless ssid
+         exec 3>&1
+         IDXSELECTED=$(whiptail \
+            --backtitle "$ER_EVENT_NAME" \
+            --title "Wireless network" \
+            --nocancel \
+            --notags \
+            --menu "\nSelect wireless network with internet access you want to connect to:" 0 0 0 \
+            $(i=0; for wssid in "${WLANARR[@]}"; do menu_item "$i" "$wssid"; ((i+=1)); done) 2>&1 1>&3)
+         exec 3>&-
+         WLANSELECTED="${WLANARR[$IDXSELECTED]}"
+         # may contain quotes and so on, so store it in a safe way
+         XXDWLAN=$(echo "$WLANSELECTED" | xxd -p | tr -d '[:cntrl:]')
+         sed -i -r "s/^(ER_HOST_SSID=).*/\1$XXDWLAN/" "$CONFIGFILE"
+
+         # enter passphrase
+         PASSPHRASE=$(whiptail \
+            --backtitle "$ER_EVENT_NAME" \
+            --title "Passphrase" \
+            --nocancel \
+            --inputbox "\nEnter passphrase for wireless network '$WLANSELECTED':" 0 0 \
+            3>&1 1>&2 2>&3)
+         XXDPASSPHRASE=$(echo "$PASSPHRASE" | xxd -p | tr -d '[:cntrl:]')
+         sed -i -r "s/^(ER_HOST_PSK=).*/\1$XXDPASSPHRASE/" "$CONFIGFILE"
+      else
+         whiptail_message "No network found" \
+            "It looks like there is no wireless network available. Please try again.\nIf you want to connect to a hidden network, edit config manually."
+      fi
+      set +f
+   fi
+}
+
+source_config() {
+   # all needed variables must be present; if not, add them
+   if [[ $(grep "^ER_AP_SSID=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_AP_SSID=\"Snooper\"" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_AP_PSK=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_AP_PSK=\"12345678\"" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_AP_IP=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_AP_IP=\"10.0.13.1\"" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_WIFI_IFACE=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_WIFI_IFACE=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_WAN_IFACE=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_WAN_IFACE=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_AP_DNS1=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_AP_DNS1=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_AP_DNS2=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_AP_DNS2=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_HOST_SSID=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_HOST_SSID=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   if [[ $(grep "^ER_HOST_PSK=" "$CONFIGFILE" | wc -l) -eq 0 ]]; then
+      echo -e "\nER_HOST_PSK=" | tee -a "$CONFIGFILE" > /dev/null
+   fi
+   # source it...
+   source "$CONFIGFILE"
+   # ...and check it
+   IFACES=$(ip address | awk '($1~/:$/){print $2}' | grep --invert-match "lo:" | sed 's/://g')
+   if [[ -z $ER_WIFI_IFACE ]] || ( ! printf '%s\n' "$IFACES" | grep -i "^$ER_WIFI_IFACE$" > /dev/null) ||
+      [[ -z $ER_WAN_IFACE ]] || ( ! printf '%s\n' "$IFACES" | grep -i "^$ER_WAN_IFACE$" > /dev/null) ||
+      [[ "$ER_WIFI_IFACE" == "$ER_WAN_IFACE" ]]; then
+      whiptail_message "Configuration issue" \
+         "Network interfaces specified in configuration file are not valid.\nTo act as a wireless router, two different interfaces connected to the system are needed.\n\nYou will be prompted to choose interfaces now."
+      set_interfaces
+      source "$CONFIGFILE"
+   fi
+   #
+   # TODO AP SSID/PSK not empty
+   #
+}
+
+if ! sudo -n true 2> /dev/null; then
+   echo -e "\nEduRouter needs an authorization to configure network interfaces..."
+   sudo true
+fi
+
+CONFIGFILE="$HOME/.config/edurouter/edurouter.conf"
+DIALOG_CANCEL=1
+DIALOG_ESC=255
+
+source_config
+main_menu

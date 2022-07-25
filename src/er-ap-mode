@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+PROGNAME="$(basename $0)"
+
+usage() {
+    echo "Usage: $PROGNAME OPTION"
+    echo
+    echo "Options:"
+    echo "   -n, --normal    Start AP defined in config file"
+    echo "   -o, --open      Start open AP 'Free Wifi'"
+    echo "   -p, --probe     Start rogue AP and show WiFi probe requests"
+    exit 1
+}
+
+AP_TYPE=
+
+GETOPT_ARGS=$(getopt -o nop -l "normal,open,probe" -n "$PROGNAME" -- "$@")
+[[ $? -ne 0 ]] && usage
+eval set -- "$GETOPT_ARGS"
+while :; do
+    case "$1" in
+        -n|--normal)
+            [[ $AP_TYPE ]] && usage
+            AP_TYPE="N"
+            shift
+            ;;
+        -o|--open)
+            [[ $AP_TYPE ]] && usage
+            AP_TYPE="O"
+            shift
+            ;;
+        -p|--probe)
+            [[ $AP_TYPE ]] && usage
+            AP_TYPE="P"
+            shift
+            ;;
+        --)
+            [[ $AP_TYPE ]] || usage
+            break
+            ;;
+    esac
+done
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+if [[ "$ER_WAN_IFACE" == "$ER_WIFI_IFACE" ]]; then
+   echo "[APmode] Error. WiFi and Internet cannot run on the same interface. Fix configuration."
+   echo "[APmode] WiFi (AP) interface: ${ER_WIFI_IFACE}, internet interface: ${ER_WAN_IFACE}."
+   exit 1
+fi
+
+# before starting AP (e.g. with new config) stop running one, if any
+er-turnoff-ap --silent
+
+echo "[APmode] Clearing firewall rules..."
+# no rules/empty firewall; reset all changes in iptables (default filter table and nat table)
+sudo iptables --flush
+sudo iptables --table nat --flush
+# tools used at the moment (berate_ap, mitmproxy) do not modify other tables
+# sudo iptables --table mangle --flush
+# sudo iptables --table raw --flush
+# sudo iptables --table security --flush
+sudo iptables --policy FORWARD ACCEPT
+sudo iptables --policy INPUT   ACCEPT
+sudo iptables --policy OUTPUT  ACCEPT
+
+# TODO: check if WIFI iface is wireless - quit if err
+# TODO: check if WAN iface is up - just info
+# TODO: check if WAN iface has IP addr - just info
+
+
+# # disconnect wifi, if any
+# #   if [ "$(ip link show "$ER_WIFI_IFACE" | grep 'UP ' | wc -l)" -eq "1" ]; then
+echo "[APmode] Preparing interface '${ER_WIFI_IFACE}'..."
+sudo ip link set "$ER_WIFI_IFACE" down
+sudo ip addr flush "$ER_WIFI_IFACE"
+sudo ip link set "$ER_WIFI_IFACE" up
+
+# we alwyas start new wifi with default (empty) hosts file
+er-dns-mode --normal
+
+case $AP_TYPE in
+   N)
+      set -f
+      SSID="$ER_AP_SSID"
+      echo "[APmode] Starting Wi-Fi access point, SSID '$ER_AP_SSID', passphrase: '$ER_AP_PSK'..."
+      sudo berate_ap --daemon --vanilla --no-virt \
+         -e /tmp/er-hosts -g "$ER_AP_IP" \
+         "$ER_WIFI_IFACE" "$ER_WAN_IFACE" "$ER_AP_SSID" "$ER_AP_PSK" >/dev/null 2>&1
+      set +f
+      ;;
+   O)
+      SSID="Free Wifi"
+      echo "[APmode] Starting open Wi-Fi access point, SSID '$SSID'..."
+      sudo berate_ap --daemon --vanilla --no-virt \
+         -e /tmp/er-hosts -g "$ER_AP_IP" \
+         "$ER_WIFI_IFACE" "$ER_WAN_IFACE" "$SSID" >/dev/null 2>&1
+      ;;
+   P)
+      SSID=
+      echo "[APmode] Starting rogue WiFi AP to monitor probe requests..."
+      echo "-----------------------------------------------------------------------"
+      echo "                   Press Ctrl-C to stop monitoring."
+      echo "-----------------------------------------------------------------------"
+      sudo berate_ap --colour --mana --mana-loud -n --hidden --no-virt \
+         "$ER_WIFI_IFACE" hiddenssid pswd1oaYxiXluxKsIz
+      echo
+      echo "[APmode] Monitor finished. (No AP is running now.)"
+      ;;
+esac
+
+check_if_running() {
+   if ! pidof "$1" >/dev/null; then
+      echo "[APmode] Warning! Service $1 is not running."
+      ERR=1
+   fi
+}
+
+if [[ "$AP_TYPE" != "P" ]]; then
+   # insert firewall rule to block DNS-over-TLS to capture all DNS requests (force device to use port 53)
+   sudo iptables -I FORWARD -p tcp -m tcp --dport 853 -j DROP
+
+   ERR=
+   sleep 2
+   check_if_running dnsmasq
+   check_if_running hostapd
+
+   if [[ "$ERR" ]]; then
+      echo "[APmode] Setup failed! AP is not running."
+      exit 1
+   else
+      echo "[APmode] Starting network traffic capture..."
+      mkdir -p "$HOME/.cache/edurouter/"
+      FILE="$HOME/.cache/edurouter/$(date +%F__%H-%M-%S).pcapng"
+      # run capture as a new process, without controlling terminal
+      setsid --fork dumpcap -i "$ER_WIFI_IFACE" -s 512 -n -q -w "$FILE"
+      # limited packet size is for privacy reasons; remove '-s 512' parameter if you need full capture
+
+      ERR=
+      sleep 2
+      check_if_running dumpcap
+      if [[ "$ERR" ]]; then
+         echo "[APmode] Network traffic capture is not running, you cannot create reports."
+         exit 2
+      else
+         echo "[APmode] Network traffic will be captured as long as access point '$SSID' is running."
+         echo "         If you do not want this, kill 'dumpcap' process (menu System > htop)."
+      fi
+   fi
+
+fi

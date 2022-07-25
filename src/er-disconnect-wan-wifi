@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+echo "[DiscWifiWAN] Disconnecting..."
+sudo sudo killall wpa_supplicant
+sleep 3
+
+echo "[DiscWifiWAN] Removing IP address of WAN interface."
+sudo ip addr flush "$ER_WAN_IFACE"
+
+echo "[DiscWifiWAN] Done."

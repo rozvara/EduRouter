@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+echo "[DHCP] Trying obtain IP setting on WAN interface '${ER_WAN_IFACE}'..."
+
+# TODO: Check if AP is running when WAN on wireless?
+
+if [[ $ER_WAN_IFACE ]]; then
+   sudo ip link set "$ER_WAN_IFACE" up
+   sleep 0.1
+   # remove current setting
+   sudo ip route flush table main
+   sudo ip address flush dev "$ER_WAN_IFACE"
+   sleep 0.1
+   # clear previous settings; do not request previously stored address from another network
+   sudo rm /var/lib/dhcp/* > /dev/null 2>&1
+   echo "# if you see this, no dns from dhcp..." | sudo tee /etc/resolv.conf > /dev/null
+   # show progress and kill daemon after (un)successful lease
+   sudo dhclient -v "$ER_WAN_IFACE"
+   sudo killall dhclient > /dev/null 2>&1
+   # overwrite when different nameservers are required
+   if [[ $ER_AP_DNS1 ]] || [[ $ER_AP_DNS2 ]]; then
+      echo "[DHCP] Using manually specified DNS servers $ER_AP_DNS1 $ER_AP_DNS2"
+      echo "# dhcp nameservers overwritten by er-wan-dhcp" | sudo tee /etc/resolv.conf > /dev/null
+      [[ $ER_AP_DNS1 ]] && echo "nameserver $ER_AP_DNS1" | sudo tee -a /etc/resolv.conf > /dev/null
+      [[ $ER_AP_DNS2 ]] && echo "nameserver $ER_AP_DNS2" | sudo tee -a /etc/resolv.conf > /dev/null
+   fi
+else
+   echo "[DHCP] Error. No WAN interface specified. Please edit configuration."
+   exit 1
+fi
+
+# show results
+echo "[DHCP] Current network settings on '${ER_WAN_IFACE}':"
+ip address show "$ER_WAN_IFACE" | grep inet | awk $'{print "       IP address/subnet: " $2}'
+GW=$(ip route list | awk '$1=="default"{print $3}' | head -1)
+echo "       Default gateway: $GW"
+cat /etc/resolv.conf | awk '$1=="nameserver"{print "       DNS server: " $2}'
+echo "[DHCP] Finished."
+exit 0

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# This file is part of `EduRouter tools'
+
+# load config
+source "$HOME/.config/edurouter/edurouter.conf"
+
+# TODO check iface exists
+
+dump=$(sudo LANG=C iw dev "$ER_WIFI_IFACE" station dump)
+ERR="$?"
+
+if [[ $ERR ]]; then
+   echo "AP ${ER_AP_SSID}'s clients @ $(date)"
+   echo
+   maclist=$(printf '%s\n' "$dump" | grep Station | cut -s -f 2 -d" ")
+   for mac in $maclist
+   do
+      stat=$(printf '%s\n' "$dump" | grep -A 4 $mac)
+      echo $stat | awk -F ' ' '{print $2 " = " $11 " B sent, " $17 " B received, last seen " $7/1000 " s"}'
+   done
+fi
+exit "$ERR"
