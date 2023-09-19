@@ -395,7 +395,7 @@ sudo chmod oa+rwx --recursive /var/www/
 message "All done. Need to reboot now..."
 sleep 3
 sudo reboot
-
+exit 0
 
 # the following is tar.gz file with content of demo phishing website
 # which will be extracted into /var/www/fakeweb/
