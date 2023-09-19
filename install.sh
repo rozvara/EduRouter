@@ -51,7 +51,7 @@ message() {
 # TODO: check apt sources has ^deb http
 # TODO: check internet connection
 
-message "Updating packages..."
+message "Updating Debian..."
 sudo apt-get update
 
 # enter sudo password only once at the beginning of the session
@@ -60,10 +60,10 @@ echo "Defaults timestamp_timeout=1440" | sudo tee /etc/sudoers.d/01-timeout > /d
 sudo apt-get upgrade --yes
 
 message "Installing system tools..."
-sudo apt-get install --yes coreutils psmisc htop inxi cmatrix mc lynx lighttpd openssh-server openssl bash-completion curl wget whiptail man-db python3 qrencode
+sudo apt-get install --yes coreutils psmisc htop inxi cmatrix mc lynx lighttpd openssh-server openssl bash-completion curl wget whiptail man-db python3 qrencode xxd lshw
 
 message "Installing networking tools..."
-sudo apt-get install --yes wpasupplicant iw hostapd dnsmasq iptables haveged speedtest-cli arp-scan nmap
+sudo apt-get install --yes wpasupplicant iw hostapd dnsmasq iptables haveged speedtest-cli arp-scan nmap rfkill bridge-utils
 
 message "Installing network traffic capturing tools..."
 # no dialogs from those packages
@@ -83,7 +83,7 @@ sudo apt-get install --yes mitmproxy net-tools
 
 message "Installing fonts and PDF libraries..."
 sudo apt-get install --yes python3-pil python3-pip fonts-dejavu-extra
-pip3 install fpdf
+pip3 install fpdf --break-system-packages
 
 message "Installing tools to make binaries from source code..."
 sudo apt-get --yes install build-essential pkg-config git libnl-genl-3-dev libssl-dev

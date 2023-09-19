@@ -36,7 +36,7 @@ Very old laptop will work fine! (512 MB of RAM will work, 1 GB is more than enou
 
 ### 1. Install Debian GNU/Linux
 
-Be sure to download .iso installation image from [here](https://cdimage.debian.org/cdimage/unofficial/non-free/cd-including-firmware/current/multi-arch/iso-cd/) (because we do not know what type of processor your old laptop has and what particular hardware is inside it) and create bootable USB disk from that image.
+Download installation image for your architecture from [here](https://cdimage.debian.org/debian-cd/current/) (netinst.iso in iso-cd directory) and create bootable USB disk from that image.
 
 Plug __Ethernet cable__ with internet access into your old laptop, boot from USB and install Debian __without Desktop environment, only with standard tools.__ 
 
