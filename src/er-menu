@@ -581,6 +581,7 @@ system_menu() {
 
 set_interfaces() {
    # select wireless interface
+   sudo rfkill unblock all
    IFACES=$(sudo iw dev | awk '$1=="Interface"{print $2 " " $2}')
    if [[ ! $IFACES ]]; then
       whiptail_message \

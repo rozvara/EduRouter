@@ -55,6 +55,7 @@ if [[ $WAN_OVER_WIFI ]]; then
 
    set -f
    echo "[WAN] Connecting to network using wireless interface '${ER_WAN_IFACE}' and SSID '${HOST_SSID}'..."
+   sudo rfkill unblock all
 
    # clean not well terminated previous services, if any
    sudo ip link set "$ER_WAN_IFACE" down

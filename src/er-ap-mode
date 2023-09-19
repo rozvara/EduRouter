@@ -75,6 +75,7 @@ sudo iptables --policy OUTPUT  ACCEPT
 # # disconnect wifi, if any
 # #   if [ "$(ip link show "$ER_WIFI_IFACE" | grep 'UP ' | wc -l)" -eq "1" ]; then
 echo "[APmode] Preparing interface '${ER_WIFI_IFACE}'..."
+sudo rfkill unblock all
 sudo ip link set "$ER_WIFI_IFACE" down
 sudo ip addr flush "$ER_WIFI_IFACE"
 sudo ip link set "$ER_WIFI_IFACE" up
